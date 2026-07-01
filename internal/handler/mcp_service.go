@@ -303,6 +303,11 @@ func (h *MCPServiceHandler) UpdateMCPService(c *gin.Context) {
 		if authType, ok := authConfig["auth_type"].(string); ok {
 			service.AuthConfig.AuthType = types.MCPAuthType(authType)
 		}
+		// api_key_header is non-secret structural config (header name for the
+		// api_key strategy); flows through the main PUT like custom_headers.
+		if apiKeyHeader, ok := authConfig["api_key_header"].(string); ok {
+			service.AuthConfig.APIKeyHeader = apiKeyHeader
+		}
 		if scopes, ok := authConfig["scopes"].([]interface{}); ok {
 			list := make([]string, 0, len(scopes))
 			for _, s := range scopes {
@@ -640,16 +645,16 @@ func (h *MCPServiceHandler) ResolveToolApproval(c *gin.Context) {
 		c.Error(errors.NewBadRequestError("decision must be approve or reject"))
 		return
 	}
-	userID, _ := c.Get(types.UserIDContextKey.String())
-	userIDStr, _ := userID.(string)
-	// Reject calls without an authenticated user up front. The gate's
-	// per-user authorization is fail-close, but surfacing 401 here gives
+	principal, _ := types.PrincipalFromContext(ctx)
+	gateUserID := principal.StorageID()
+	// Reject calls without an authenticated principal up front. The gate's
+	// per-principal authorization is fail-close, but surfacing 401 here gives
 	// a clearer signal that auth middleware did not populate the context.
-	if strings.TrimSpace(userIDStr) == "" {
+	if strings.TrimSpace(gateUserID) == "" {
 		c.Error(errors.NewUnauthorizedError("authenticated user required to resolve tool approval"))
 		return
 	}
-	if err := h.toolApprovalGate.Resolve(tenantID, userIDStr, pendingID, dec); err != nil {
+	if err := h.toolApprovalGate.Resolve(tenantID, gateUserID, pendingID, dec); err != nil {
 		switch {
 		case stderrors.Is(err, approval.ErrPendingNotFound):
 			c.Error(errors.NewNotFoundError("pending approval not found or already completed"))
